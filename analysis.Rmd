@@ -1,0 +1,10 @@
+---
+title: "527 Final Project"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+df <- read.csv("healthcare_dataset.csv")
+```
