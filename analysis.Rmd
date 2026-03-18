@@ -1,0 +1,29 @@
+---
+title: "527 Final Project"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+df <- read.csv("healthcare_dataset.csv")
+```
+
+How many unique values are there for each variable 
+```{r}
+df_cols <- names(df) 
+
+print(paste0("There are ", nrow(df), " rows in this dataset"))
+
+count_unique <- function(df,var) {
+  df |>
+    select({{var}}) |>
+    distinct() |>
+    nrow()
+}
+
+for (col in df_cols) {
+  print(paste0(col, " has ", count_unique(df, col), " unique values"))
+}
+```
+
