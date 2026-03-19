@@ -1,0 +1,65 @@
+---
+title: "527 Final Project"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+df <- read.csv("healthcare_dataset.csv")
+```
+
+How many unique values are there for each variable 
+```{r}
+df_cols <- names(df) 
+
+print(paste0("There are ", nrow(df), " rows in this dataset"))
+
+count_unique <- function(df,var) {
+  df |>
+    select({{var}}) |>
+    distinct() |>
+    nrow()
+}
+
+for (col in df_cols) {
+  print(paste0(col, " has ", count_unique(df, col), " unique values"))
+}
+```
+
+Preliminary checks:
+```{r}
+rows_with_na <- !complete.cases(df)
+sum(rows_with_na)
+
+rm(rows_with_na)
+```
+  - Checked type of each variable / column.
+```{r}
+str(df)
+```
+
+Convert date columns into date type
+```{r}
+library(lubridate)
+df$Date.of.Admission <- ymd(df$Date.of.Admission)
+df$Discharge.Date <- ymd(df$Discharge.Date)
+```
+
+Create buckets for age groups
+```{r}
+df$Age_Groups <- cut(df$Age, breaks = seq(0,100, by=10), labels = c("1-10", "11-20", "21-30", "31-40", "41-50", "51-60", "61-70", "71-80", "81-90", "91-100")) 
+```
+
+Some summary stats
+```{r}
+print((tapply(df$Billing.Amount, 
+    list(df$Age_Groups, df$Gender),
+    mean)))
+
+
+print(tapply(df$Billing.Amount, 
+    list(df$Age_Groups, df$Gender),
+    sd))
+
+```
