@@ -27,3 +27,58 @@ for (col in df_cols) {
 }
 ```
 
+
+Preliminary checks:
+```{r}
+rows_with_na <- !complete.cases(df)
+sum(rows_with_na)
+
+rm(rows_with_na)
+```
+  - Checked type of each variable / column.
+```{r}
+str(df)
+```
+
+Convert date columns into date type, fix names to be First Last, round billing to 2 decimal places 
+```{r}
+library(lubridate)
+library(stringr)
+df$Date.of.Admission <- ymd(df$Date.of.Admission)
+df$Discharge.Date <- ymd(df$Discharge.Date)
+df$Name <- str_to_title(df$Name)
+df$Billing.Amount <- round(df$Billing.Amount, digits = 2)
+
+```
+
+Create buckets for age groups
+1-10 and 90-100 were intentionally left out as they weren't in the dataset. Please double check that for me though :D 
+I also created an age_group vector, not sure if it's needed but could be used to plot, etc 
+```{r}
+df$Age_Groups <- cut(df$Age, breaks = seq(10,90, by=10), labels = c("11-20", "21-30", "31-40", "41-50", "51-60", "61-70", "71-80", "81-90")) 
+age_group_v <- unique(df$Age_Groups)
+```
+
+Some summary stats from questions we were looking at in our Descriptive Statistics section. 
+```{r}
+print((tapply(df$Billing.Amount, 
+    list(df$Age_Groups, df$Gender),
+    mean)))
+
+
+print(tapply(df$Billing.Amount, 
+    list(df$Age_Groups, df$Gender),
+    sd))
+
+print(tapply(df$Medication,
+        list(df$Age_Groups, df$Gender),
+        function(x) length(unique(x))))
+
+print(tapply(df$Billing.Amount, df$Medical.Condition, mean))
+
+date_diff <- as.numeric(df$Discharge.Date - df$Date.of.Admission)
+print(mean(date_diff))
+print(sd(date_diff))
+
+print(tapply(df$Test.Results, df$Medical.Condition, length))
+```
