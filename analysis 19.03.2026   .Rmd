@@ -6,7 +6,34 @@ output: pdf_document
 ```{r}
 library(dplyr)
 library(ggplot2)
-df <- read.csv("healthcare_dataset.csv")
+library(digest)
+raw_df <- read.csv("healthcare_dataset.csv")
+```
+
+Who are the duplicate members?
+```{r}
+raw_df |>
+  mutate(Name = tolower(Name)) |>
+  group_by(Name) |>
+  count() |>
+  arrange(desc(n))
+```
+There are a lot of member duplicates in this dataset. We will determine a member is unique at the name, blood type, and gender level. 
+```{r}
+mem_ids <- raw_df |>
+  mutate(unique_mem = paste0(tolower(Name), Blood.Type, Gender)) |>
+  select(unique_mem) |>
+  distinct() |>
+  mutate(id = dense_rank(unique_mem)) |>
+  arrange(id)
+
+pre_df <- raw_df |>mutate(unique_mem = paste0(tolower(Name), Blood.Type, Gender)) |> left_join(mem_ids)
+
+df <- pre_df |>
+  group_by(id, Date.of.Admission) |>
+  slice(1) |>
+  arrange(id) |>
+  ungroup()
 ```
 
 How many unique values are there for each variable 
@@ -24,6 +51,21 @@ count_unique <- function(df,var) {
 
 for (col in df_cols) {
   print(paste0(col, " has ", count_unique(df, col), " unique values"))
+}
+```
+Count frequency of discrete variables. This dataset is uniformly generated.
+```{r}
+discrete_vars <- c("Name", "Age", "Gender", "Blood.Type", "Medical.Condition", "Hospital", "Doctor", "Admission.Type", "Medication", "Test.Results")
+
+count_vars <- function(df, var) {
+  df |>
+    group_by(.data[[var]]) |>
+    count() |>
+    arrange(n)
+}
+
+for (var in discrete_vars) {
+  print(count_vars(df, var))
 }
 ```
 
@@ -81,3 +123,5 @@ print(sd(date_diff))
 
 print(tapply(df$Test.Results, df$Medical.Condition, length))
 ```
+
+
