@@ -1,19 +1,24 @@
 ---
-title: "527 Final Project"
+title: "analysis"
+author: "Tyler Vo"
+date: "2026-04-13"
 output: pdf_document
 ---
 
-```{r}
-library(dplyr)
+```{r setup, include=FALSE}
+library(tidyr)
 library(ggplot2)
-df <- read.csv("healthcare_dataset.csv")
+library(dplyr)
+library(glue)
+
+raw_df <- read.csv("ref/MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV")
 ```
 
 How many unique values are there for each variable 
 ```{r}
-df_cols <- names(df) 
+df_cols <- names(raw_df) 
 
-print(paste0("There are ", nrow(df), " rows in this dataset"))
+print(paste0("There are ", nrow(raw_df), " rows in this dataset"))
 
 count_unique <- function(df,var) {
   df |>
@@ -23,7 +28,105 @@ count_unique <- function(df,var) {
 }
 
 for (col in df_cols) {
-  print(paste0(col, " has ", count_unique(df, col), " unique values"))
+  print(paste0(col, " has ", count_unique(raw_df, col), " unique values"))
 }
+```
+
+```{r}
+discrete_vars <- c("Rndrng_Prvdr_Org_Name", "Rndrng_Prvdr_City", "Rndrng_Prvdr_St", "Rndrng_Prvdr_State_FIPS", "Rndrng_Prvdr_Zip5", "Rndrng_Prvdr_State_Abrvtn", "Rndrng_Prvdr_RUCA", "Rndrng_Prvdr_RUCA_Desc", "DRG_Cd", "DRG_Desc")
+continuous_vars <- c("Tot_Dschrgs", "Avg_Submtd_Cvrd_Chrg", "Avg_Tot_Pymt_Amt", "Avg_Mdcr_Pymt_Amt")
+```
+
+List of questions I have:
+- Which hospital has the most inpatient stay?
+- Which hospital charges the most/least on average?
+  - Could be a good opportunity for a box plot
+- Is there a state where IP stays are more costly?
+- Which DRG are the most costly for patients? For Medicare?
+  - Are they somewhat similar?
+  - Does Medicare cover certain procedures at a higher rate than other procedures?
+- How much more expensive it MCC vs CC?
+  
+What we can't answer with this data:
+-  Rate of IP stays by state. We will require the total Part A Beneficiaries by State
+
+
+```{r}
+df <- raw_df |>
+  mutate(avg_patient_pay = Avg_Tot_Pymt_Amt - Avg_Mdcr_Pymt_Amt)
+
+all_discharge <- sum(df$Tot_Dschrgs)
+
+df_summary <- df |>
+  group_by(Rndrng_Prvdr_Org_Name) |>
+  summarise(discharge_by_hospital = sum(Tot_Dschrgs)) |>
+  mutate(pct_of_all_discharged = discharge_by_hospital/all_discharge) |>
+  arrange(desc(discharge_by_hospital))
+
+ggplot(df_summary, aes(x = pct_of_all_discharged)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(
+    title = "Distribution of % of Total Discharges by Hospital",
+    x = "Percent of Total Discharges",
+    y = "Density"
+  )
+```
+Based on the graph above, it looks like most hospitals have less than .1% of the Medicare Part A population
+
+Which hospitals charges the most and least on average?
+```{r}
+avg_cost_calc <- function(df, var) {
+  df |>
+  group_by(Rndrng_Prvdr_Org_Name) |>
+  summarise(avg_cost = mean(.data[[var]], na.rm = TRUE)) |>
+  arrange(desc(avg_cost))
+}
+
+medicare_spend_by_hosp <- avg_cost_calc(df, "Avg_Mdcr_Pymt_Amt")
+
+ggplot(medicare_spend_by_hosp, aes(x = avg_cost)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(
+    title = "Distribution of Medicare spend by hospitals",
+    x = "Total Spend",
+    y = "Density"
+  )
+```
+The average hospital stay costs Medicare less than $25,000. For the most part, it follows a normal distribution
+
+```{r}
+patient_oop_by_hosp <- avg_cost_calc(df, "avg_patient_pay")
+
+ggplot(patient_oop_by_hosp, aes(x = avg_cost)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(
+    title = "Distribution of patient spend by hospitals",
+    x = "Total Spend",
+    y = "Density"
+  )
+```
+Because we are dealing with medical costs, there are a decent amount of outliers that will skew the average cost to be higher than it should be. It's probably best to use box plots when describing costs.
+
+What is the most common DRG?
+```{r}
+df |>
+  group_by(DRG_Desc) |>
+  summarise(discharge = sum(Tot_Dschrgs)) |>
+  mutate(pct = discharge/all_discharge) |>
+  arrange(desc(discharge))
+```
+Which DRG is the most expensive for patients?
+```{r}
+drg_cost_calc <- function(df, var) {
+  df |>
+    group_by(DRG_Desc) |>
+    mutate(wgt_cost = .data[[var]] * Tot_Dschrgs) |>
+    summarise(wgt_cost = sum(wgt_cost),
+              wgt_disc = sum(Tot_Dschrgs)) |>
+    mutate(wgt_avg_cost = wgt_cost/wgt_disc) |>
+    arrange(desc(wgt_disc))
+}
+
+drg_cost_calc(df, "avg_patient_pay")
 ```
 
