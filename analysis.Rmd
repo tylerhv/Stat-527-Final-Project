@@ -13,6 +13,7 @@ library(glue)
 library(forcats)
 library(sandwich)
 library(lmtest)
+library(stringr)
 
 raw_df <- read.csv("ref/MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV")
 ```
@@ -174,42 +175,30 @@ df_clean <- df %>%
       str_detect(DRG_Desc, "SEPSIS|INFECTION") ~ "Infectious",
       str_detect(DRG_Desc, "HIP|FEMUR|JOINT") ~ "Orthopedic",
       TRUE ~ "Other"
-    )
-) |>
-  select(log_spend, log_discharges, log_charge, state, DRG_Cd, metro_area, Rndrng_Prvdr_Org_Name, log_oop) %>%
+    )) |>
+  select(log_spend, log_discharges, log_charge, state, DRG_group, metro_area, Rndrng_Prvdr_Org_Name, log_oop) %>%
   drop_na()
 
-# taking the top 20 DRGs as features, the rest are categorized as "Other". This will make runtime more reasonable and reduce overfitting
-top_drg <- df_clean %>%
-  group_by(DRG_Cd) %>%
-  summarise(tot_discharge = sum(log_discharges)) %>%
-  slice_head(n = 20) |>
-  arrange(desc(tot_discharge)) |>
-  pull(DRG_Cd)
-
-# limiting hospitals for the same reason as above
-top_10_hosp <- df_clean %>%
-  group_by(Rndrng_Prvdr_Org_Name) %>%
-  summarise(tot_discharge = sum(log_discharges)) %>%
-  slice_head(n = 10) |>
-  arrange(desc(Rndrng_Prvdr_Org_Name)) |>
-  pull(Rndrng_Prvdr_Org_Name)
+# there's a lot of variation between hospitals. Rolling up variables so our model doesn't capture the noise as much
+df_clean <- df_clean |>
+  group_by(state, DRG_group, metro_area) |>
+  summarise(total_medicare_spend = sum(log_spend),
+            total_charge = sum(log_charge),
+            total_discharge = sum(log_discharges),
+            wgt_avg_medicare_spend = total_medicare_spend/total_discharge,
+            wgt_avg_charge = total_charge/total_discharge)
 
 df_clean <- df_clean %>%
   mutate(
-    DRG_group = ifelse(DRG_Cd %in% top_drg, DRG_Cd, "Other"),
     DRG_group = as.factor(DRG_group),
     state = as.factor(state),
-    metro_area = as.factor(metro_area),
-    hosp = ifelse(Rndrng_Prvdr_Org_Name %in% top_10_hosp, Rndrng_Prvdr_Org_Name, "Other"),
-    hosp = as.factor(hosp)
-  )
+    metro_area = as.factor(metro_area))
 
 # ---------------------------
 # 3. Fit regression model
 # ---------------------------
 model <- lm(
-  log_spend ~ log_oop + log_discharges + log_charge + state + DRG_group + metro_area + hosp,
+  wgt_avg_medicare_spend ~ DRG_group + metro_area,
   data = df_clean
 )
 
