@@ -10,6 +10,7 @@ library(tidyr)
 library(ggplot2)
 library(dplyr)
 library(glue)
+library(forcats)
 
 raw_df <- read.csv("ref/MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV")
 ```
@@ -49,6 +50,7 @@ List of questions I have:
   
 What we can't answer with this data:
 -  Rate of IP stays by state. We will require the total Part A Beneficiaries by State
+- No point in doing ANOVAs with this data. The total discharge is extremely high, so any difference in cost is bound to cause the p values to be below .05. Also, ANOVAs only tell us if there exist a difference in means between groups
 
 
 ```{r}
@@ -71,7 +73,7 @@ ggplot(df_summary, aes(x = pct_of_all_discharged)) +
     y = "Density"
   )
 ```
-Based on the graph above, it looks like most hospitals have less than .1% of the Medicare Part A population
+Based on the graph above, it looks like most hospitals account for less than .1% of the Medicare population
 
 Which hospitals charges the most and least on average?
 ```{r}
@@ -115,18 +117,42 @@ df |>
   mutate(pct = discharge/all_discharge) |>
   arrange(desc(discharge))
 ```
-Which DRG is the most expensive for patients?
+
+Find average cost by relevant categories
 ```{r}
-drg_cost_calc <- function(df, var) {
+cost_calc <- function(df, cost_var, group_var) {
   df |>
-    group_by(DRG_Desc) |>
-    mutate(wgt_cost = .data[[var]] * Tot_Dschrgs) |>
+    group_by(.data[[group_var]]) |>
+    mutate(wgt_cost = .data[[cost_var]] * Tot_Dschrgs) |>
     summarise(wgt_cost = sum(wgt_cost),
               wgt_disc = sum(Tot_Dschrgs)) |>
-    mutate(wgt_avg_cost = wgt_cost/wgt_disc) |>
+    mutate("{cost_var}" := wgt_cost/wgt_disc) |>
     arrange(desc(wgt_disc))
 }
 
-drg_cost_calc(df, "avg_patient_pay")
+cost_vars <- c("avg_patient_pay", "Avg_Mdcr_Pymt_Amt")
+group_vars <- c("Rndrng_Prvdr_Org_Name", "Rndrng_Prvdr_State_Abrvtn", "Rndrng_Prvdr_RUCA_Desc", "DRG_Desc")
+
+for (i in cost_vars) {
+  for (j in group_vars){
+    tmp <- cost_calc(df, i, j)
+    assign(glue("{j}:{i}"), tmp)
+    print(tmp)
+  }
+}
+
 ```
+
+
+```{r}
+
+state_patient_oop <- `Rndrng_Prvdr_State_Abrvtn:avg_patient_pay`|>
+  mutate(Rndrng_Prvdr_State_Abrvtn = fct_reorder(Rndrng_Prvdr_State_Abrvtn, avg_patient_pay))
+
+
+ggplot(state_patient_oop, aes(x=Rndrng_Prvdr_State_Abrvtn, y = avg_patient_pay)) +
+  geom_col()
+```
+
+
 
