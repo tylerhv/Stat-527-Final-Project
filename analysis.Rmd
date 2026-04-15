@@ -11,6 +11,8 @@ library(ggplot2)
 library(dplyr)
 library(glue)
 library(forcats)
+library(sandwich)
+library(lmtest)
 
 raw_df <- read.csv("ref/MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV")
 ```
@@ -84,7 +86,7 @@ avg_cost_calc <- function(df, var) {
   arrange(desc(avg_cost))
 }
 
-medicare_spend_by_hosp <- avg_cost_calc(df, "Avg_Mdcr_Pymt_Amt")
+medicare_spend_by_hosp <- avg_cost_calc(df_clean, "log_spend")
 
 ggplot(medicare_spend_by_hosp, aes(x = avg_cost)) +
   geom_density(fill = "blue", alpha = 0.4) +
@@ -143,7 +145,7 @@ for (i in cost_vars) {
 
 ```
 
-
+The highest cost state is "DC", but that's likely due to higher variance since it has less discharges than any other state.
 ```{r}
 
 state_patient_oop <- `Rndrng_Prvdr_State_Abrvtn:avg_patient_pay`|>
@@ -154,5 +156,144 @@ ggplot(state_patient_oop, aes(x=Rndrng_Prvdr_State_Abrvtn, y = avg_patient_pay))
   geom_col()
 ```
 
+```{r}
+# taking the log of our continuous values so they are closer to a normal distribution
+df_clean <- df %>%
+  mutate(
+    log_spend = log(Avg_Mdcr_Pymt_Amt),
+    log_oop = log(avg_patient_pay+.000000001), # to avoid -Inf error.
+    log_discharges = log(Tot_Dschrgs),
+    log_charge = log(Avg_Submtd_Cvrd_Chrg),
+    state = Rndrng_Prvdr_State_Abrvtn,
+    metro_area = Rndrng_Prvdr_RUCA_Desc
+  ) %>%
+  mutate(DRG_group = case_when(
+      str_detect(DRG_Desc, "HEART|CARDIAC") ~ "Cardiovascular",
+      str_detect(DRG_Desc, "LUNG|RESPIRATORY") ~ "Respiratory",
+      str_detect(DRG_Desc, "KIDNEY|RENAL") ~ "Renal",
+      str_detect(DRG_Desc, "SEPSIS|INFECTION") ~ "Infectious",
+      str_detect(DRG_Desc, "HIP|FEMUR|JOINT") ~ "Orthopedic",
+      TRUE ~ "Other"
+    )
+) |>
+  select(log_spend, log_discharges, log_charge, state, DRG_Cd, metro_area, Rndrng_Prvdr_Org_Name, log_oop) %>%
+  drop_na()
+
+# taking the top 20 DRGs as features, the rest are categorized as "Other". This will make runtime more reasonable and reduce overfitting
+top_drg <- df_clean %>%
+  group_by(DRG_Cd) %>%
+  summarise(tot_discharge = sum(log_discharges)) %>%
+  slice_head(n = 20) |>
+  arrange(desc(tot_discharge)) |>
+  pull(DRG_Cd)
+
+# limiting hospitals for the same reason as above
+top_10_hosp <- df_clean %>%
+  group_by(Rndrng_Prvdr_Org_Name) %>%
+  summarise(tot_discharge = sum(log_discharges)) %>%
+  slice_head(n = 10) |>
+  arrange(desc(Rndrng_Prvdr_Org_Name)) |>
+  pull(Rndrng_Prvdr_Org_Name)
+
+df_clean <- df_clean %>%
+  mutate(
+    DRG_group = ifelse(DRG_Cd %in% top_drg, DRG_Cd, "Other"),
+    DRG_group = as.factor(DRG_group),
+    state = as.factor(state),
+    metro_area = as.factor(metro_area),
+    hosp = ifelse(Rndrng_Prvdr_Org_Name %in% top_10_hosp, Rndrng_Prvdr_Org_Name, "Other"),
+    hosp = as.factor(hosp)
+  )
+
+# ---------------------------
+# 3. Fit regression model
+# ---------------------------
+model <- lm(
+  log_spend ~ log_oop + log_discharges + log_charge + state + DRG_group + metro_area + hosp,
+  data = df_clean
+)
+
+# Standard summary
+summary(model)
+
+# ---------------------------
+# 4. Robust standard errors
+# ---------------------------
+coeftest(model, vcov = vcovHC(model, type = "HC1"))
+
+# ---------------------------
+# 5. Diagnostic plots
+# ---------------------------
+par(mfrow = c(2, 2))
+plot(model)
+```
+Lasso
+```{r}
+library(glmnet)
 
 
+df_clean <- df %>%
+  mutate(
+    log_spend = log(Avg_Mdcr_Pymt_Amt),
+    log_discharges = log(Tot_Dschrgs),
+    log_charge = log(Avg_Submtd_Cvrd_Chrg),
+    state = as.factor(Rndrng_Prvdr_State_Abrvtn),
+    DRG = as.factor(DRG_Cd)
+  ) %>%
+  select(log_spend, log_discharges, log_charge, state, DRG) %>%
+  drop_na()
+
+# ---------------------------
+# 2. Create design matrix
+# ---------------------------
+# glmnet needs a matrix (handles factors automatically)
+x <- model.matrix(log_spend ~ ., data = df_clean)[, -1]  # remove intercept
+y <- df_clean$log_spend
+
+# ---------------------------
+# 3. Train/test split
+# ---------------------------
+set.seed(123)
+train_idx <- sample(nrow(x), 0.8 * nrow(x))
+
+x_train <- x[train_idx, ]
+y_train <- y[train_idx]
+
+x_test <- x[-train_idx, ]
+y_test <- y[-train_idx]
+
+# ---------------------------
+# 4. Fit LASSO (cross-validated)
+# ---------------------------
+cv_model <- cv.glmnet(
+  x_train,
+  y_train,
+  alpha = 1  # LASSO
+)
+
+# Best lambda
+best_lambda <- cv_model$lambda.min
+
+# ---------------------------
+# 5. Final model
+# ---------------------------
+lasso_model <- glmnet(
+  x_train,
+  y_train,
+  alpha = 1,
+  lambda = best_lambda
+)
+
+# ---------------------------
+# 6. Coefficients (selected features)
+# ---------------------------
+coef(lasso_model)
+
+# ---------------------------
+# 7. Evaluate performance
+# ---------------------------
+pred <- predict(lasso_model, s = best_lambda, newx = x_test)
+
+# Mean Squared Error
+mean((pred - y_test)^2)
+```
