@@ -87,7 +87,7 @@ avg_cost_calc <- function(df, var) {
   arrange(desc(avg_cost))
 }
 
-medicare_spend_by_hosp <- avg_cost_calc(df_clean, "log_spend")
+medicare_spend_by_hosp <- avg_cost_calc(df, "Avg_Mdcr_Pymt_Amt")
 
 ggplot(medicare_spend_by_hosp, aes(x = avg_cost)) +
   geom_density(fill = "blue", alpha = 0.4) +
@@ -188,17 +188,11 @@ df_clean <- df_clean |>
             wgt_avg_medicare_spend = total_medicare_spend/total_discharge,
             wgt_avg_charge = total_charge/total_discharge)
 
-df_clean <- df_clean %>%
-  mutate(
-    DRG_group = as.factor(DRG_group),
-    state = as.factor(state),
-    metro_area = as.factor(metro_area))
-
 # ---------------------------
 # 3. Fit regression model
 # ---------------------------
 model <- lm(
-  wgt_avg_medicare_spend ~ DRG_group + metro_area,
+  wgt_avg_medicare_spend ~ DRG_group + metro_area +state +wgt_avg_charge,
   data = df_clean
 )
 
