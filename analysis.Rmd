@@ -210,13 +210,32 @@ summary(pay_model)
 # 4. Robust standard errors
 # ---------------------------
 coeftest(model, vcov = vcovHC(model, type = "HC1"))
-
+coeftest(pay_model, vcov = vcovHC(model, type = "HC1"))
 # ---------------------------
 # 5. Diagnostic plots
 # ---------------------------
 par(mfrow = c(2, 2))
 plot(model)
 plot(pay_model)
+```
+
+plotted some predictions vs actuals
+
+```{r}
+ggplot(df_clean, aes(x = patient_pay_rpredict, y = wgt_avg_patient_pay)) +
+    geom_point(alpha = .5, color = "black") +
+    geom_abline(slope = 1, intercept = 0, color = "red") +
+    labs(x = "Predicted", y = "Actual")
+    
+ggplot(df_clean, aes(x = medicare_pay_predict, y = wgt_avg_medicare_spend)) +
+    geom_point(alpha = .5, color = "black") +
+    geom_abline(slope = 1, intercept = 0, color = "red") +
+    labs(x = "Predicted", y = "Actual")    
+```
+
+```{r}
+df_clean$patient_pay_rpredict <- predict.lm(pay_model, df_clean)
+df_clean$medicare_pay_predict <- predict.lm(model, df_clean)
 ```
 closed ridge solution for weighted average patient payment, manual lambda = 0.01 
 ```{r}
