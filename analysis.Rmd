@@ -205,7 +205,14 @@ pay_model <- lm(
 # Standard summary
 summary(model)
 summary(pay_model)
+##MAE & RMSE Medicare
+mean(abs(df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict))
+RMSE sqrt(mean((df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict)^2))
 
+##MAE & RMSE Patient Pay
+
+mean(abs(df_clean$wgt_avg_patient_pay - df_clean$patient_pay_rpredict))
+sqrt(mean((df_clean$wgt_avg_patient_pay - df_clean$patient_pay_rpredict)^2))
 # ---------------------------
 # 4. Robust standard errors
 # ---------------------------
