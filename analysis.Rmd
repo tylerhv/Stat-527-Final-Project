@@ -176,7 +176,7 @@ df_clean <- df %>%
       str_detect(DRG_Desc, "HIP|FEMUR|JOINT") ~ "Orthopedic",
       TRUE ~ "Other"
     )) |>
-  select(log_spend, log_discharges, log_charge, state, DRG_group, metro_area, Rndrng_Prvdr_Org_Name, log_oop) %>%
+  select(log_spend, log_discharges, log_charge, state, DRG_group, metro_area, Rndrng_Prvdr_Org_Name,log_oop) %>%
   drop_na()
 
 # there's a lot of variation between hospitals. Rolling up variables so our model doesn't capture the noise as much
@@ -186,6 +186,7 @@ df_clean <- df_clean |>
             total_charge = sum(log_charge),
             total_discharge = sum(log_discharges),
             wgt_avg_medicare_spend = total_medicare_spend/total_discharge,
+            wgt_avg_patient_pay = sum(log_oop)/total_discharge,
             wgt_avg_charge = total_charge/total_discharge)
 
 # ---------------------------
@@ -196,8 +197,14 @@ model <- lm(
   data = df_clean
 )
 
+pay_model <- lm(
+  wgt_avg_patient_pay ~ DRG_group + metro_area +state +wgt_avg_charge,
+  data = df_clean
+)
+
 # Standard summary
 summary(model)
+summary(pay_model)
 
 # ---------------------------
 # 4. Robust standard errors
@@ -209,7 +216,38 @@ coeftest(model, vcov = vcovHC(model, type = "HC1"))
 # ---------------------------
 par(mfrow = c(2, 2))
 plot(model)
+plot(pay_model)
 ```
+closed ridge solution for weighted average patient payment, manual lambda = 0.01 
+```{r}
+ridge_x <- model.matrix(~., data = df_clean[,c(1,2,3,10)])[,-1] #### we do - 1 to get rid of intercept column 
+ridge_y <- df_clean$wgt_avg_patient_pay
+
+lambda <- 0.01
+I <- diag(ncol(ridge_x))
+
+ridge <- solve(t(ridge_x) %*% ridge_x + lambda*I) %*% t(ridge_x) %*% ridge_y
+
+ridge_yhat <- ridge_x %*% ridge ## matrix multiplicat to get our yhats 
+ridge_residuals <- ridge_y - ridge_yhat
+ridge_fitted <- ridge_yhat
+```
+
+closed ridge solution for weighted average medicare spend, manual lambda = 0.01
+```{r}
+ridge_x_medicare <- model.matrix(~., data = df_clean[,c(1,2,3,10)])[,-1] #### we do - 1 to get rid of intercept column 
+ridge_y_medicare <- df_clean$wgt_avg_medicare_spend
+
+lambda <- 0.01
+I <- diag(ncol(ridge_x_medicare))
+
+ridge_medicare <- solve(t(ridge_x_medicare) %*% ridge_x_medicare + lambda*I) %*% t(ridge_x_medicare) %*% ridge_y_medicare
+
+ridge_yhat_m <- ridge_x_medicare %*% ridge_medicare ## matrix multiplicat to get our yhats 
+ridge_residuals_m <- ridge_y_medicare - ridge_yhat_m
+ridge_fitted_m <- ridge_yhat_m
+```
+
 Lasso
 ```{r}
 library(glmnet)
