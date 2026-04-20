@@ -207,7 +207,7 @@ summary(model)
 summary(pay_model)
 ##MAE & RMSE Medicare
 mean(abs(df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict))
-RMSE sqrt(mean((df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict)^2))
+sqrt(mean((df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict)^2))
 
 ##MAE & RMSE Patient Pay
 
