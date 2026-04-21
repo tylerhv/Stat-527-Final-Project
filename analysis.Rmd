@@ -5,25 +5,83 @@ date: "2026-04-13"
 output: pdf_document
 ---
 
+# Import and Libraries
 ```{r setup, include=FALSE}
 library(tidyr)
 library(ggplot2)
 library(dplyr)
 library(glue)
-library(forcats)
-library(sandwich)
-library(lmtest)
 library(stringr)
 
 raw_df <- read.csv("ref/MUP_INP_RY25_P03_V10_DY23_PrvSvc.CSV")
 ```
 
+# Roll-up categories
+Roll up DRG codes to broad diagnostic categories
+```{R}
+drg_grouping <- raw_df |>
+  mutate(DRG_group = case_when(
+    # Neurological
+    str_detect(DRG_Desc, "CRANI|NEURO|CEREBR|INTRACRANIAL|SEIZURE|STROKE|NERVOUS") ~ "Neuro",
+    # Respiratory
+    str_detect(DRG_Desc, "RESPIRATORY|PULMONARY|VENTILATION|LUNG|EDEMA") ~ "Respiratory",
+    # Cardiac
+    str_detect(DRG_Desc, "CARDIAC|HEART|MYOCARDIAL|CORONARY|ARRHYTHMIA|CHF") ~ "Cardiac",
+    # Gastrointestinal / Hepatic
+    str_detect(DRG_Desc, "GASTRO|INTESTIN|COLON|LIVER|HEPATIC|PANCREA|DIGEST") ~ "GI/Hepatic",
+    # Renal / Urinary
+    str_detect(DRG_Desc, "RENAL|KIDNEY|URINARY|BLADDER|DIALYSIS") ~ "Renal/Urinary",
+    # Infection / Sepsis
+    str_detect(DRG_Desc, "SEPSIS|INFECTION|INFECTIOUS|BACTERIA|VIRAL") ~ "Infectious",
+    # Oncology
+    str_detect(DRG_Desc, "NEOPLASM|CANCER|LYMPHOMA|LEUKEMIA|MALIGN") ~ "Oncology",
+    # Orthopedic / MSK
+    str_detect(DRG_Desc, "JOINT|HIP|FEMUR|SPINE|ORTHO|BONE|MUSCULOSKELETAL") ~ "Orthopedic",
+    # OB / GYN / Neonatal
+    str_detect(DRG_Desc, "PREGNANCY|DELIVERY|CESAREAN|NEWBORN|NEONATE|OBSTETRIC") ~ "OB/GYN",
+    # Trauma / Injury
+    str_detect(DRG_Desc, "TRAUMA|INJURY|FRACTURE|WOUND|BURN") ~ "Trauma",
+    str_detect(DRG_Desc, "PROCEDURE|SURGERY") ~ "Procedures",
+    TRUE ~ "Other"))
+
+drg_check <- drg_grouping |>
+  select(DRG_Cd, DRG_Desc, DRG_group) |>
+  distinct() |>
+  group_by(DRG_group) |>
+  count() |>
+  arrange(desc(n))
+
+drg_check
+```
+
+Roll up RUCA codes into broad metropolitan categories based on guidance from the US Department of Agriculture
+```{r}
+metro_grouping <- drg_grouping |>
+  mutate(metro_pre = as.integer(str_extract(as.character(Rndrng_Prvdr_RUCA),"^\\d+")))|>
+  mutate(metro_area =case_when(
+    metro_pre >= 1 & metro_pre <=3 ~ "Metropolitan",
+    metro_pre >=4 & metro_pre <= 6 ~ "Micropolitan",
+    metro_pre >= 7 & metro_pre <= 9 ~ "Small town",
+    metro_pre == 10 ~ "Rural",
+    .default = "Not Coded"
+  ))
+
+metro_check <- metro_grouping |>
+  select(Rndrng_Prvdr_Org_Name, metro_area) |>
+  distinct() |>
+  group_by(metro_area) |>
+  count() |>
+  arrange(n)
+
+```
+
+# Exploratory Data Analysis
 How many unique values are there for each variable 
 ```{r}
 df_cols <- names(raw_df) 
 
 print(paste0("There are ", nrow(raw_df), " rows in this dataset"))
-
+  
 count_unique <- function(df,var) {
   df |>
     select({{var}}) |>
@@ -35,90 +93,11 @@ for (col in df_cols) {
   print(paste0(col, " has ", count_unique(raw_df, col), " unique values"))
 }
 ```
-
 ```{r}
-discrete_vars <- c("Rndrng_Prvdr_Org_Name", "Rndrng_Prvdr_City", "Rndrng_Prvdr_St", "Rndrng_Prvdr_State_FIPS", "Rndrng_Prvdr_Zip5", "Rndrng_Prvdr_State_Abrvtn", "Rndrng_Prvdr_RUCA", "Rndrng_Prvdr_RUCA_Desc", "DRG_Cd", "DRG_Desc")
-continuous_vars <- c("Tot_Dschrgs", "Avg_Submtd_Cvrd_Chrg", "Avg_Tot_Pymt_Amt", "Avg_Mdcr_Pymt_Amt")
-```
-
-List of questions I have:
-- Which hospital has the most inpatient stay?
-- Which hospital charges the most/least on average?
-  - Could be a good opportunity for a box plot
-- Is there a state where IP stays are more costly?
-- Which DRG are the most costly for patients? For Medicare?
-  - Are they somewhat similar?
-  - Does Medicare cover certain procedures at a higher rate than other procedures?
-- How much more expensive it MCC vs CC?
-  
-What we can't answer with this data:
--  Rate of IP stays by state. We will require the total Part A Beneficiaries by State
-- No point in doing ANOVAs with this data. The total discharge is extremely high, so any difference in cost is bound to cause the p values to be below .05. Also, ANOVAs only tell us if there exist a difference in means between groups
-
-
-```{r}
-df <- raw_df |>
+df <- metro_grouping |>
   mutate(avg_patient_pay = Avg_Tot_Pymt_Amt - Avg_Mdcr_Pymt_Amt)
 
 all_discharge <- sum(df$Tot_Dschrgs)
-
-df_summary <- df |>
-  group_by(Rndrng_Prvdr_Org_Name) |>
-  summarise(discharge_by_hospital = sum(Tot_Dschrgs)) |>
-  mutate(pct_of_all_discharged = discharge_by_hospital/all_discharge) |>
-  arrange(desc(discharge_by_hospital))
-
-ggplot(df_summary, aes(x = pct_of_all_discharged)) +
-  geom_density(fill = "blue", alpha = 0.4) +
-  labs(
-    title = "Distribution of % of Total Discharges by Hospital",
-    x = "Percent of Total Discharges",
-    y = "Density"
-  )
-```
-Based on the graph above, it looks like most hospitals account for less than .1% of the Medicare population
-
-Which hospitals charges the most and least on average?
-```{r}
-avg_cost_calc <- function(df, var) {
-  df |>
-  group_by(Rndrng_Prvdr_Org_Name) |>
-  summarise(avg_cost = mean(.data[[var]], na.rm = TRUE)) |>
-  arrange(desc(avg_cost))
-}
-
-medicare_spend_by_hosp <- avg_cost_calc(df, "Avg_Mdcr_Pymt_Amt")
-
-ggplot(medicare_spend_by_hosp, aes(x = avg_cost)) +
-  geom_density(fill = "blue", alpha = 0.4) +
-  labs(
-    title = "Distribution of Medicare spend by hospitals",
-    x = "Total Spend",
-    y = "Density"
-  )
-```
-The average hospital stay costs Medicare less than $25,000. For the most part, it follows a normal distribution
-
-```{r}
-patient_oop_by_hosp <- avg_cost_calc(df, "avg_patient_pay")
-
-ggplot(patient_oop_by_hosp, aes(x = avg_cost)) +
-  geom_density(fill = "blue", alpha = 0.4) +
-  labs(
-    title = "Distribution of patient spend by hospitals",
-    x = "Total Spend",
-    y = "Density"
-  )
-```
-Because we are dealing with medical costs, there are a decent amount of outliers that will skew the average cost to be higher than it should be. It's probably best to use box plots when describing costs.
-
-What is the most common DRG?
-```{r}
-df |>
-  group_by(DRG_Desc) |>
-  summarise(discharge = sum(Tot_Dschrgs)) |>
-  mutate(pct = discharge/all_discharge) |>
-  arrange(desc(discharge))
 ```
 
 Find average cost by relevant categories
@@ -129,7 +108,7 @@ cost_calc <- function(df, cost_var, group_var) {
     mutate(wgt_cost = .data[[cost_var]] * Tot_Dschrgs) |>
     summarise(wgt_cost = sum(wgt_cost),
               wgt_disc = sum(Tot_Dschrgs)) |>
-    mutate("{cost_var}" := wgt_cost/wgt_disc) |>
+    mutate("{cost_var}" := wgt_cost/wgt_disc) |> # calculate the weighted average
     arrange(desc(wgt_disc))
 }
 
@@ -140,10 +119,42 @@ for (i in cost_vars) {
   for (j in group_vars){
     tmp <- cost_calc(df, i, j)
     assign(glue("{j}:{i}"), tmp)
-    print(tmp)
   }
 }
+```
+Most inpatient hospital stay costs Medicare less than $25,000. The average Medicare cost per discharge follows a right-skewed normal distribution. This suggests that we should log the Medicare cost column before feeding it into the model.
+```{r}
+ggplot(`Rndrng_Prvdr_Org_Name:Avg_Mdcr_Pymt_Amt`, aes(x = Avg_Mdcr_Pymt_Amt)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(
+    title = "Distribution of Medicare spend by hospitals",
+    x = "Total Spend",
+    y = "Density"
+  )
+```
+Most patients spend less than $10,000 per discharge. Similarly, the distribution follows a right-skewed normal distribution, suggesting that we should log the patient cost before feeding it into the model. 
+```{r}
+ggplot(`Rndrng_Prvdr_Org_Name:avg_patient_pay`, aes(x = avg_patient_pay)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(
+    title = "Distribution of patient spend by hospitals",
+    x = "Total Spend",
+    y = "Density"
+  )
+```
 
+```{r}
+drg_group_count <- df |>
+  group_by(DRG_group) |>
+  summarise(discharge = sum(Tot_Dschrgs)) |>
+  mutate(pct = discharge/all_discharge) |>
+  arrange(desc(discharge)) |>
+  mutate(DRG_group = fct_reorder(DRG_group,pct))
+
+p <- ggplot(drg_group_count, aes(x=DRG_group, y = pct, fill = DRG_group)) +
+  geom_col()+
+  labs(y = "Discharge Percent") +
+  scale_fill_viridis_d(option = "C")
 ```
 
 The highest cost state is "DC", but that's likely due to higher variance since it has less discharges than any other state.
@@ -165,17 +176,8 @@ df_clean <- df %>%
     log_oop = log(avg_patient_pay+.000000001), # to avoid -Inf error.
     log_discharges = log(Tot_Dschrgs),
     log_charge = log(Avg_Submtd_Cvrd_Chrg),
-    state = Rndrng_Prvdr_State_Abrvtn,
-    metro_area = Rndrng_Prvdr_RUCA_Desc
-  ) %>%
-  mutate(DRG_group = case_when(
-      str_detect(DRG_Desc, "HEART|CARDIAC") ~ "Cardiovascular",
-      str_detect(DRG_Desc, "LUNG|RESPIRATORY") ~ "Respiratory",
-      str_detect(DRG_Desc, "KIDNEY|RENAL") ~ "Renal",
-      str_detect(DRG_Desc, "SEPSIS|INFECTION") ~ "Infectious",
-      str_detect(DRG_Desc, "HIP|FEMUR|JOINT") ~ "Orthopedic",
-      TRUE ~ "Other"
-    )) |>
+    state = Rndrng_Prvdr_State_Abrvtn
+  ) |>
   select(log_spend, log_discharges, log_charge, state, DRG_group, metro_area, Rndrng_Prvdr_Org_Name,log_oop) %>%
   drop_na()
 
@@ -189,9 +191,6 @@ df_clean <- df_clean |>
             wgt_avg_patient_pay = sum(log_oop)/total_discharge,
             wgt_avg_charge = total_charge/total_discharge)
 
-# ---------------------------
-# 3. Fit regression model
-# ---------------------------
 model <- lm(
   wgt_avg_medicare_spend ~ DRG_group + metro_area +state +wgt_avg_charge,
   data = df_clean
@@ -205,19 +204,22 @@ pay_model <- lm(
 # Standard summary
 summary(model)
 summary(pay_model)
+```
+
+```{r}
+df_clean$patient_pay_rpredict <- predict.lm(pay_model, df_clean)
+df_clean$medicare_pay_predict <- predict.lm(model, df_clean)
+```
+
+```{R}
 ##MAE & RMSE Medicare
 mean(abs(df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict))
 sqrt(mean((df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict)^2))
 
 ##MAE & RMSE Patient Pay
 
-mean(abs(df_clean$wgt_avg_patient_pay - df_clean$patient_pay_rpredict))
-sqrt(mean((df_clean$wgt_avg_patient_pay - df_clean$patient_pay_rpredict)^2))
-# ---------------------------
-# 4. Robust standard errors
-# ---------------------------
-coeftest(model, vcov = vcovHC(model, type = "HC1"))
-coeftest(pay_model, vcov = vcovHC(model, type = "HC1"))
+mean(abs(df_clean$wgt_avg_patient_pay - df_clean$patient_pay_predict))
+sqrt(mean((df_clean$wgt_avg_patient_pay - df_clean$patient_pay_predict)^2))
 # ---------------------------
 # 5. Diagnostic plots
 # ---------------------------
@@ -240,10 +242,6 @@ ggplot(df_clean, aes(x = medicare_pay_predict, y = wgt_avg_medicare_spend)) +
     labs(x = "Predicted", y = "Actual")    
 ```
 
-```{r}
-df_clean$patient_pay_rpredict <- predict.lm(pay_model, df_clean)
-df_clean$medicare_pay_predict <- predict.lm(model, df_clean)
-```
 closed ridge solution for weighted average patient payment, manual lambda = 0.01 
 ```{r}
 ridge_x <- model.matrix(~., data = df_clean[,c(1,2,3,10)])[,-1] #### we do - 1 to get rid of intercept column 
@@ -272,75 +270,4 @@ ridge_medicare <- solve(t(ridge_x_medicare) %*% ridge_x_medicare + lambda*I) %*%
 ridge_yhat_m <- ridge_x_medicare %*% ridge_medicare ## matrix multiplicat to get our yhats 
 ridge_residuals_m <- ridge_y_medicare - ridge_yhat_m
 ridge_fitted_m <- ridge_yhat_m
-```
-
-Lasso
-```{r}
-library(glmnet)
-
-
-df_clean <- df %>%
-  mutate(
-    log_spend = log(Avg_Mdcr_Pymt_Amt),
-    log_discharges = log(Tot_Dschrgs),
-    log_charge = log(Avg_Submtd_Cvrd_Chrg),
-    state = as.factor(Rndrng_Prvdr_State_Abrvtn),
-    DRG = as.factor(DRG_Cd)
-  ) %>%
-  select(log_spend, log_discharges, log_charge, state, DRG) %>%
-  drop_na()
-
-# ---------------------------
-# 2. Create design matrix
-# ---------------------------
-# glmnet needs a matrix (handles factors automatically)
-x <- model.matrix(log_spend ~ ., data = df_clean)[, -1]  # remove intercept
-y <- df_clean$log_spend
-
-# ---------------------------
-# 3. Train/test split
-# ---------------------------
-set.seed(123)
-train_idx <- sample(nrow(x), 0.8 * nrow(x))
-
-x_train <- x[train_idx, ]
-y_train <- y[train_idx]
-
-x_test <- x[-train_idx, ]
-y_test <- y[-train_idx]
-
-# ---------------------------
-# 4. Fit LASSO (cross-validated)
-# ---------------------------
-cv_model <- cv.glmnet(
-  x_train,
-  y_train,
-  alpha = 1  # LASSO
-)
-
-# Best lambda
-best_lambda <- cv_model$lambda.min
-
-# ---------------------------
-# 5. Final model
-# ---------------------------
-lasso_model <- glmnet(
-  x_train,
-  y_train,
-  alpha = 1,
-  lambda = best_lambda
-)
-
-# ---------------------------
-# 6. Coefficients (selected features)
-# ---------------------------
-coef(lasso_model)
-
-# ---------------------------
-# 7. Evaluate performance
-# ---------------------------
-pred <- predict(lasso_model, s = best_lambda, newx = x_test)
-
-# Mean Squared Error
-mean((pred - y_test)^2)
 ```
