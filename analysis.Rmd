@@ -21,25 +21,15 @@ Roll up DRG codes to broad diagnostic categories
 ```{R}
 drg_grouping <- raw_df |>
   mutate(DRG_group = case_when(
-    # Neurological
     str_detect(DRG_Desc, "CRANI|NEURO|CEREBR|INTRACRANIAL|SEIZURE|STROKE|NERVOUS") ~ "Neuro",
-    # Respiratory
     str_detect(DRG_Desc, "RESPIRATORY|PULMONARY|VENTILATION|LUNG|EDEMA") ~ "Respiratory",
-    # Cardiac
     str_detect(DRG_Desc, "CARDIAC|HEART|MYOCARDIAL|CORONARY|ARRHYTHMIA|CHF") ~ "Cardiac",
-    # Gastrointestinal / Hepatic
     str_detect(DRG_Desc, "GASTRO|INTESTIN|COLON|LIVER|HEPATIC|PANCREA|DIGEST") ~ "GI/Hepatic",
-    # Renal / Urinary
     str_detect(DRG_Desc, "RENAL|KIDNEY|URINARY|BLADDER|DIALYSIS") ~ "Renal/Urinary",
-    # Infection / Sepsis
     str_detect(DRG_Desc, "SEPSIS|INFECTION|INFECTIOUS|BACTERIA|VIRAL") ~ "Infectious",
-    # Oncology
     str_detect(DRG_Desc, "NEOPLASM|CANCER|LYMPHOMA|LEUKEMIA|MALIGN") ~ "Oncology",
-    # Orthopedic / MSK
     str_detect(DRG_Desc, "JOINT|HIP|FEMUR|SPINE|ORTHO|BONE|MUSCULOSKELETAL") ~ "Orthopedic",
-    # OB / GYN / Neonatal
     str_detect(DRG_Desc, "PREGNANCY|DELIVERY|CESAREAN|NEWBORN|NEONATE|OBSTETRIC") ~ "OB/GYN",
-    # Trauma / Injury
     str_detect(DRG_Desc, "TRAUMA|INJURY|FRACTURE|WOUND|BURN") ~ "Trauma",
     str_detect(DRG_Desc, "PROCEDURE|SURGERY") ~ "Procedures",
     TRUE ~ "Other"))
@@ -113,14 +103,25 @@ cost_calc <- function(df, cost_var, group_var) {
 }
 
 cost_vars <- c("avg_patient_pay", "Avg_Mdcr_Pymt_Amt")
-group_vars <- c("Rndrng_Prvdr_Org_Name", "Rndrng_Prvdr_State_Abrvtn", "Rndrng_Prvdr_RUCA_Desc", "DRG_Desc")
+group_vars <- c("Rndrng_Prvdr_Org_Name", "Rndrng_Prvdr_State_Abrvtn", "metro_area", "DRG_group")
 
 for (i in cost_vars) {
   for (j in group_vars){
     tmp <- cost_calc(df, i, j)
     assign(glue("{j}:{i}"), tmp)
+    print(tmp)
   }
 }
+```
+```{r}
+pre_avg <- df |>
+  mutate(medicare_wgt = Tot_Dschrgs*Avg_Mdcr_Pymt_Amt,
+         oop_wgt = Tot_Dschrgs*avg_patient_pay)
+medicare_avg <- sum(pre_avg$medicare_wgt, na.rm = TRUE)/sum(df$Tot_Dschrgs, na.rm=TRUE)
+oop_avg <- sum(pre_avg$oop_wgt, na.rm = TRUE)/sum(df$Tot_Dschrgs, na.rm=TRUE)
+print(glue("The average discharge costs Medicare ${round(medicare_avg,2)}"))
+print(glue("The average patient OOP per discharge costs ${round(oop_avg,2)}"))
+print(glue("This means that Medicare pays {round(medicare_avg/oop_avg,2)} times the patient OOP cost on average."))
 ```
 Most inpatient hospital stay costs Medicare less than $25,000. The average Medicare cost per discharge follows a right-skewed normal distribution. This suggests that we should log the Medicare cost column before feeding it into the model.
 ```{r}
@@ -132,7 +133,7 @@ ggplot(`Rndrng_Prvdr_Org_Name:Avg_Mdcr_Pymt_Amt`, aes(x = Avg_Mdcr_Pymt_Amt)) +
     y = "Density"
   )
 ```
-Most patients spend less than $10,000 per discharge. Similarly, the distribution follows a right-skewed normal distribution, suggesting that we should log the patient cost before feeding it into the model. 
+Most patients spend less than $5,000 per discharge. Similarly, the distribution follows a right-skewed normal distribution, suggesting that we should log the patient cost before feeding it into the model. 
 ```{r}
 ggplot(`Rndrng_Prvdr_Org_Name:avg_patient_pay`, aes(x = avg_patient_pay)) +
   geom_density(fill = "blue", alpha = 0.4) +
@@ -153,21 +154,111 @@ drg_group_count <- df |>
 
 p <- ggplot(drg_group_count, aes(x=DRG_group, y = pct, fill = DRG_group)) +
   geom_col()+
-  labs(y = "Discharge Percent") +
-  scale_fill_viridis_d(option = "C")
+  labs(y = "Percent", title = "Percent of Discharge by DRG group") +
+  scale_fill_viridis_d(option = "B")
+p
+```
+
+Oncology and Procedure DRGs are the two most expensive groups on average to patients and Medicare. However, despite patients paying more for oncology care, Medicare reimburses hospitals more for procedures.
+```{r}
+drg_patient_pay <- `DRG_group:avg_patient_pay` |>
+  mutate(DRG_group = fct_reorder(DRG_group,avg_patient_pay, .desc=TRUE))
+
+p <- ggplot(drg_patient_pay, aes(x=DRG_group, y = avg_patient_pay, fill = DRG_group)) +
+  geom_col()+
+  labs(y = "Average Out-of-Pocket Cost", title = "Average Patient Out-of-Pocket Cost by DRG Group") +
+  scale_fill_viridis_d(option = "B")
+p
+```
+
+```{r}
+drg_medicare_cost <- `DRG_group:Avg_Mdcr_Pymt_Amt` |>
+  mutate(DRG_group = fct_reorder(DRG_group,Avg_Mdcr_Pymt_Amt, .desc=TRUE))
+
+p <- ggplot(drg_medicare_cost, aes(x=DRG_group, y = Avg_Mdcr_Pymt_Amt, fill = DRG_group)) +
+  geom_col()+
+  labs(y = "Average Medicare Cost", title = "Average Medicare Cost by DRG Group") +
+  scale_fill_viridis_d(option = "B")
+p
+
+```
+Hospital reimbursement rates are similar across all DRG categories.
+```{r}
+drg_reimbursement_rate <- drg_medicare_cost |>
+  left_join(drg_patient_pay, by = "DRG_group") |>
+  mutate(reimbursement_rate = Avg_Mdcr_Pymt_Amt/(Avg_Mdcr_Pymt_Amt+avg_patient_pay)) |>
+  mutate(DRG_group = fct_reorder(DRG_group,reimbursement_rate))
+
+p <- ggplot(drg_reimbursement_rate, aes(x=DRG_group, y = reimbursement_rate, fill = DRG_group)) +
+  geom_col()+
+  labs(y = "Average Medicare Reimbursement Rate", title = "Average Medicare Reimbursement Rate by DRG Group") +
+  scale_fill_viridis_d(option = "B")
+p
+```
+
+```{r}
+metro_medicare_cost <- `metro_area:Avg_Mdcr_Pymt_Amt` |>
+  mutate(metro_area = fct_reorder(metro_area,Avg_Mdcr_Pymt_Amt, .desc=TRUE))
+
+p <- ggplot(metro_medicare_cost, aes(x=metro_area, y = Avg_Mdcr_Pymt_Amt, fill = metro_area)) +
+  geom_col()+
+  labs(x = "Metro Area",y = "Average Medicare Cost", title = "Average Medicare Cost by Metro Area") +
+  scale_fill_viridis_d(option = "B")
+p
+```
+
+Medicare reimburses hospitals in metropolitan area at a slightly lower rate compared to all other metropolitan areas.
+```{r}
+metro_oop_cost <- `metro_area:avg_patient_pay` |>
+  mutate(metro_area = fct_reorder(metro_area,avg_patient_pay, .desc=TRUE))
+
+p <- ggplot(metro_oop_cost, aes(x=metro_area, y = avg_patient_pay, fill = metro_area)) +
+  geom_col()+
+  labs(x = "Metro Area",y = "Average Patient Cost", title = "Average Patient Cost by Metro Area") +
+  scale_fill_viridis_d(option = "B")
+p
+```
+```{r}
+metro_reimbursement <- left_join(`metro_area:avg_patient_pay`,`metro_area:Avg_Mdcr_Pymt_Amt`, by = "metro_area") |>
+  mutate(reimbursement_reate = Avg_Mdcr_Pymt_Amt/(Avg_Mdcr_Pymt_Amt+avg_patient_pay)) |>
+  mutate(metro_area = fct_reorder(metro_area,reimbursement_reate, .desc=TRUE))
+
+p <- ggplot(metro_reimbursement, aes(x=metro_area, y = reimbursement_reate, fill = metro_area)) +
+  geom_col()+
+  labs(x = "Metro Area", y = "Medicare Reimbursement", title = "Average Medicare Reimbursement Rate by Metro Area") +
+  scale_fill_viridis_d(option = "B")
+p
 ```
 
 The highest cost state is "DC", but that's likely due to higher variance since it has less discharges than any other state.
 ```{r}
 
 state_patient_oop <- `Rndrng_Prvdr_State_Abrvtn:avg_patient_pay`|>
-  mutate(Rndrng_Prvdr_State_Abrvtn = fct_reorder(Rndrng_Prvdr_State_Abrvtn, avg_patient_pay))
+  mutate(state_full = tolower(state.name[match(Rndrng_Prvdr_State_Abrvtn, state.abb)])) |>
+  mutate(state_full = fct_reorder(state_full, avg_patient_pay))
 
+states_map <- map_data("state")
+map_df <- left_join(states_map, state_patient_oop, by = c("region" = "state_full"))
 
-ggplot(state_patient_oop, aes(x=Rndrng_Prvdr_State_Abrvtn, y = avg_patient_pay)) +
-  geom_col()
 ```
 
+```{r}
+state_medicare_cost <- `Rndrng_Prvdr_State_Abrvtn:Avg_Mdcr_Pymt_Amt`|>
+  mutate(state_full = tolower(state.name[match(Rndrng_Prvdr_State_Abrvtn, state.abb)])) |>
+  mutate(state_full = fct_reorder(state_full, Avg_Mdcr_Pymt_Amt))
+
+ggplot(map_df, aes(long, lat, group = group, fill = Avg_Mdcr_Pymt_Amt)) +
+  geom_polygon(color = "white") +
+  scale_fill_distiller(
+  palette = "Blues",
+  direction = 1,
+  na.value = "grey90"
+) +
+  theme_void() +
+  labs(fill = "Average Medicare Cost", title = "Average Medicare Cost by State")
+```
+
+# Modeling
 ```{r}
 # taking the log of our continuous values so they are closer to a normal distribution
 df_clean <- df %>%
