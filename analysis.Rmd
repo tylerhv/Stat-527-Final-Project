@@ -287,7 +287,7 @@ ggplot(map_df_reimbursement, aes(long, lat, group = group, fill = reimbursement_
 # Modeling
 ```{r}
 # taking the log of our continuous values so they are closer to a normal distribution
-df_clean <- df %>%
+log_df <- df %>%
   mutate(
     log_spend = log(Avg_Mdcr_Pymt_Amt),
     log_oop = log(avg_patient_pay+.000000001), # to avoid -Inf error.
@@ -298,8 +298,7 @@ df_clean <- df %>%
   select(log_spend, log_discharges, log_charge, state, DRG_group, metro_area, Rndrng_Prvdr_Org_Name,log_oop) %>%
   drop_na()
 
-# there's a lot of variation between hospitals. Rolling up variables so our model doesn't capture the noise as much
-df_clean <- df_clean |>
+df_clean <- log_df |>
   group_by(state, DRG_group, metro_area) |>
   summarise(total_medicare_spend = sum(log_spend),
             total_charge = sum(log_charge),
@@ -369,7 +368,7 @@ I <- diag(ncol(ridge_x))
 
 ridge <- solve(t(ridge_x) %*% ridge_x + lambda*I) %*% t(ridge_x) %*% ridge_y
 
-ridge_yhat <- ridge_x %*% ridge ## matrix multiplicat to get our yhats 
+ridge_yhat <- ridge_x %*% ridge ## matrix multiplication to get our yhats 
 ridge_residuals <- ridge_y - ridge_yhat
 ridge_fitted <- ridge_yhat
 ```
@@ -384,7 +383,7 @@ I <- diag(ncol(ridge_x_medicare))
 
 ridge_medicare <- solve(t(ridge_x_medicare) %*% ridge_x_medicare + lambda*I) %*% t(ridge_x_medicare) %*% ridge_y_medicare
 
-ridge_yhat_m <- ridge_x_medicare %*% ridge_medicare ## matrix multiplicat to get our yhats 
+ridge_yhat_m <- ridge_x_medicare %*% ridge_medicare ## matrix multiplication to get our yhats 
 ridge_residuals_m <- ridge_y_medicare - ridge_yhat_m
 ridge_fitted_m <- ridge_yhat_m
 ```
