@@ -240,6 +240,15 @@ state_patient_oop <- `Rndrng_Prvdr_State_Abrvtn:avg_patient_pay`|>
 states_map <- map_data("state")
 map_df <- left_join(states_map, state_patient_oop, by = c("region" = "state_full"))
 
+ggplot(map_df, aes(long, lat, group = group, fill = avg_patient_pay)) +
+  geom_polygon(color = "white") +
+  scale_fill_distiller(
+  palette = "Blues",
+  direction = 1,
+  na.value = "grey90"
+) +
+  theme_void() +
+  labs(fill = "Average Patient Pay", title = "Average Patient Cost by State")
 ```
 
 ```{r}
@@ -247,7 +256,10 @@ state_medicare_cost <- `Rndrng_Prvdr_State_Abrvtn:Avg_Mdcr_Pymt_Amt`|>
   mutate(state_full = tolower(state.name[match(Rndrng_Prvdr_State_Abrvtn, state.abb)])) |>
   mutate(state_full = fct_reorder(state_full, Avg_Mdcr_Pymt_Amt))
 
-ggplot(map_df, aes(long, lat, group = group, fill = Avg_Mdcr_Pymt_Amt)) +
+
+map_df_medicare <- left_join(map_df, state_medicare_cost, by = c("region" = "state_full"))
+
+ggplot(map_df_medicare, aes(long, lat, group = group, fill = Avg_Mdcr_Pymt_Amt)) +
   geom_polygon(color = "white") +
   scale_fill_distiller(
   palette = "Blues",
@@ -256,6 +268,20 @@ ggplot(map_df, aes(long, lat, group = group, fill = Avg_Mdcr_Pymt_Amt)) +
 ) +
   theme_void() +
   labs(fill = "Average Medicare Cost", title = "Average Medicare Cost by State")
+```
+```{r}
+map_df_reimbursement <- map_df_medicare |>
+  mutate(reimbursement_rate = Avg_Mdcr_Pymt_Amt/(Avg_Mdcr_Pymt_Amt+avg_patient_pay))
+
+ggplot(map_df_reimbursement, aes(long, lat, group = group, fill = reimbursement_rate)) +
+  geom_polygon(color = "white") +
+  scale_fill_distiller(
+  palette = "Blues",
+  direction = 1,
+  na.value = "grey90"
+) +
+  theme_void() +
+  labs(fill = "Average Medicare Reimbursement Rate", title = "Average Medicare Reimbursement Rate by State")
 ```
 
 # Modeling
