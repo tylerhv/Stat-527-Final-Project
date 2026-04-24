@@ -151,7 +151,7 @@ drg_group_count <- df |>
   summarise(discharge = sum(Tot_Dschrgs)) |>
   mutate(pct = discharge/all_discharge) |>
   arrange(desc(discharge)) |>
-  mutate(DRG_group = fct_reorder(DRG_group,pct))
+  mutate(DRG_group = fct_reorder(DRG_group,pct)) ## this is where it failed. 
 
 p <- ggplot(drg_group_count, aes(x=DRG_group, y = pct, fill = DRG_group)) +
   geom_col()+
@@ -185,7 +185,7 @@ p
 ```
 Hospital reimbursement rates are similar across all DRG categories.
 ```{r}
-drg_reimbursement_rate <- drg_medicare_cost |>
+drg_reimbursement_rate <- drg_medicare_cost |>     ### This failed here. 
   left_join(drg_patient_pay, by = "DRG_group") |>
   mutate(reimbursement_rate = Avg_Mdcr_Pymt_Amt/(Avg_Mdcr_Pymt_Amt+avg_patient_pay)) |>
   mutate(DRG_group = fct_reorder(DRG_group,reimbursement_rate))
@@ -335,8 +335,8 @@ sqrt(mean((df_clean$wgt_avg_medicare_spend - df_clean$medicare_pay_predict)^2))
 
 ##MAE & RMSE Patient Pay
 
-mean(abs(df_clean$wgt_avg_patient_pay - df_clean$patient_pay_predict))
-sqrt(mean((df_clean$wgt_avg_patient_pay - df_clean$patient_pay_predict)^2))
+mean(abs(df_clean$wgt_avg_patient_pay - df_clean$patient_pay_rpredict))
+sqrt(mean((df_clean$wgt_avg_patient_pay - df_clean$patient_pay_rpredict)^2))
 # ---------------------------
 # 5. Diagnostic plots
 # ---------------------------
@@ -358,33 +358,102 @@ ggplot(df_clean, aes(x = medicare_pay_predict, y = wgt_avg_medicare_spend)) +
     geom_abline(slope = 1, intercept = 0, color = "red") +
     labs(x = "Predicted", y = "Actual")    
 ```
-
-closed ridge solution for weighted average patient payment, manual lambda = 0.01 
+Ridge setup
 ```{r}
-ridge_x <- model.matrix(~., data = df_clean[,c(1,2,3,10)])[,-1] #### we do - 1 to get rid of intercept column 
-ridge_y <- df_clean$wgt_avg_patient_pay
 
-lambda <- 0.01
-I <- diag(ncol(ridge_x))
+df_clean$state <- as.factor(df_clean$state)
+df_clean$DRG_group <- as.factor(df_clean$DRG_group)
+df_clean$metro_area <- as.factor(df_clean$metro_area)
 
-ridge <- solve(t(ridge_x) %*% ridge_x + lambda*I) %*% t(ridge_x) %*% ridge_y
 
+set.seed(1)
+
+training_index <- sample(1:nrow(df_clean),
+                         size = 0.8 * nrow(df_clean))
+
+train <- df_clean[training_index,]
+test <- df_clean[-training_index,]
+
+ridge_x_train <- model.matrix(~., data = train[,c(1,2,3,9)])[,-1] #### we do - 1 to get rid of intercept column 
+ridge_x_test <- model.matrix(~., data = test[,c(1,2,3,9)])[,-1]
+
+ridge_y_train_patient <- train$wgt_avg_patient_pay
+ridge_y_test_patient <- test$wgt_avg_patient_pay
+
+ridge_y_train_medicare <- train$wgt_avg_medicare_spend
+ridge_y_test_medicare <- test$wgt_avg_medicare_spend
+s
 ridge_yhat <- ridge_x %*% ridge ## matrix multiplication to get our yhats 
 ridge_residuals <- ridge_y - ridge_yhat
 ridge_fitted <- ridge_yhat
 ```
 
-closed ridge solution for weighted average medicare spend, manual lambda = 0.01
+
+Ridge for patient pay
 ```{r}
-ridge_x_medicare <- model.matrix(~., data = df_clean[,c(1,2,3,10)])[,-1] #### we do - 1 to get rid of intercept column 
-ridge_y_medicare <- df_clean$wgt_avg_medicare_spend
 
-lambda <- 0.01
-I <- diag(ncol(ridge_x_medicare))
+ridge_patient <- cv.glmnet(ridge_x_train, ridge_y_train_patient, alpha = 0)
+print(ridge_patient$lambda.min)
+ridge_patient_predict <-  predict(ridge_patient, s = "lambda.min", newx = ridge_x_test)
+test$ridge_patient_predictions <- ridge_patient_predict
 
-ridge_medicare <- solve(t(ridge_x_medicare) %*% ridge_x_medicare + lambda*I) %*% t(ridge_x_medicare) %*% ridge_y_medicare
 
 ridge_yhat_m <- ridge_x_medicare %*% ridge_medicare ## matrix multiplication to get our yhats 
 ridge_residuals_m <- ridge_y_medicare - ridge_yhat_m
 ridge_fitted_m <- ridge_yhat_m
 ```
+
+Ridge for medicare pay. 
+
+```{r}
+
+ridge_medicare <- cv.glmnet(ridge_x_train, ridge_y_train_medicare, alpha = 0)
+print(ridge_medicare$lambda.min)
+ridge_medicare_predict <- predict(ridge_medicare, s = "lambda.min", newx = ridge_x_test)
+test$ridge_medicare_predictions <- ridge_medicare_predict
+
+```
+
+Model analysis:
+```{r}
+pay_ridge_vector <- as.vector(test$ridge_patient_predictions)
+medicare_ridge_vector <- as.vector(test$ridge_medicare_predictions)
+
+## MAE and RMSE Patient
+
+print(mean(abs(test$wgt_avg_patient_pay - test$ridge_patient_predictions)))
+print(sqrt(mean((test$wgt_avg_patient_pay - test$ridge_patient_predictions)^2)))
+
+rss_patient <- sum((test$wgt_avg_patient_pay - pay_ridge_vector)^2)
+tss_patient <- sum((test$wgt_avg_patient_pay - mean(test$wgt_avg_patient_pay))^2)
+
+r2_patient <- 1 - rss_patient/tss_patient
+print(r2_patient)
+
+## MAE and RMSE Medicare
+
+print(mean(abs(test$wgt_avg_medicare_spend - test$ridge_medicare_predictions)))
+print(sqrt(mean((test$wgt_avg_medicare_spend - test$ridge_medicare_predictions)^2)))
+
+rss_patient_m <- sum((test$wgt_avg_medicare_spend - medicare_ridge_vector)^2)
+tss_patient_m <- sum((test$wgt_avg_medicare_spend - mean(test$wgt_avg_medicare_spend))^2)
+
+r2_medicare <- 1 - rss_patient_m/tss_patient_m
+print(r2_medicare)
+
+##R2
+
+```
+
+Comparing the two models:
+
+```{r}
+
+print(sum(test$patient_pay_rpredict - test$ridge_patient_predictions))
+
+ggplot(data = test, aes(x = ridge_patient_predictions, y = patient_pay_rpredict)) + 
+    geom_point(alpha = .5) +
+    labs ( x = "Ridge Predictions", y = "LM Predictions")
+  
+## It looks like the lm is predicting higher values compared to the ridge for patient pay, but we have 291 rows so it's not a large difference. 
+
