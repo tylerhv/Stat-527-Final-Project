@@ -382,10 +382,7 @@ ridge_y_test_patient <- test$wgt_avg_patient_pay
 
 ridge_y_train_medicare <- train$wgt_avg_medicare_spend
 ridge_y_test_medicare <- test$wgt_avg_medicare_spend
-s
-ridge_yhat <- ridge_x %*% ridge ## matrix multiplication to get our yhats 
-ridge_residuals <- ridge_y - ridge_yhat
-ridge_fitted <- ridge_yhat
+
 ```
 
 
@@ -397,10 +394,6 @@ print(ridge_patient$lambda.min)
 ridge_patient_predict <-  predict(ridge_patient, s = "lambda.min", newx = ridge_x_test)
 test$ridge_patient_predictions <- ridge_patient_predict
 
-
-ridge_yhat_m <- ridge_x_medicare %*% ridge_medicare ## matrix multiplication to get our yhats 
-ridge_residuals_m <- ridge_y_medicare - ridge_yhat_m
-ridge_fitted_m <- ridge_yhat_m
 ```
 
 Ridge for medicare pay. 
@@ -457,3 +450,4 @@ ggplot(data = test, aes(x = ridge_patient_predictions, y = patient_pay_rpredict)
   
 ## It looks like the lm is predicting higher values compared to the ridge for patient pay, but we have 291 rows so it's not a large difference. 
 
+```
